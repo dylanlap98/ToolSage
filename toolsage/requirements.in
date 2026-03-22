@@ -1,0 +1,5 @@
+# uv pip compile requirements.in -o requirements.txt
+langchain
+langchain-anthropic
+langgraph
+wikipedia

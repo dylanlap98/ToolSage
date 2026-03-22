@@ -1,0 +1,13 @@
+# Python
+*.pyc
+.venv
+toolsage/requirements.txt
+
+# Secrets
+secrets.json
+
+# macOS
+*.DS_Store
+
+# Python
+*.pyc
