@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import wikipedia
 from langchain_core.tools import tool
 from langchain_anthropic import ChatAnthropic
-from langgraph.prebuilt import create_react_agent
+from langgraph.prebuilt import create_react_agent, ToolNode
 
 from toolsage import ToolSage
 from utilities.env import populate_env
@@ -40,12 +40,7 @@ MANIFEST_PATH = os.path.join(
 @sage.tool(MANIFEST_PATH)
 def wikipedia_search(query: str) -> str:
     """Search Wikipedia and return a summary of the most relevant article."""
-    try:
-        return wikipedia.summary(query, sentences=4, auto_suggest=False)
-    except wikipedia.exceptions.DisambiguationError as e:
-        return f"DisambiguationError: '{query}' is ambiguous. Options include: {e.options[:5]}"
-    except wikipedia.exceptions.PageError:
-        return f"PageError: No Wikipedia article found for '{query}'."
+    return wikipedia.summary(query, sentences=4, auto_suggest=False)
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +79,8 @@ Use the wikipedia_search tool for each topic. Then synthesize a short narrative 
 
 def run_agent():
     llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0)
-    agent = create_react_agent(llm, tools=[wikipedia_search], prompt=SYSTEM_PROMPT)
+    tool_node = ToolNode([wikipedia_search], handle_tool_errors=True)
+    agent = create_react_agent(llm, tools=tool_node, prompt=SYSTEM_PROMPT)
 
     print("RUNNING AGENT — AI/ML History Research\n")
 
