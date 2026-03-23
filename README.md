@@ -44,7 +44,7 @@ and receives an improved manifest
 
 ### Roadmap
 - [x] Core manifest loading and injection
-- [ ] LLM-as-judge scorer
+- [x] LLM-as-judge scorer
 - [ ] SHAP feature attribution
 - [ ] Embedding store for past calls
 - [ ] Manifest auto-update loop
@@ -52,6 +52,16 @@ and receives an improved manifest
 - [ ] AWS AgentCore Strands integration
 - [ ] MCP tool support
 - [ ] OpenAI function calling support
+
+---
+
+### Docs
+
+Design decisions and implementation notes live in [`docs/decisions/`](docs/decisions/).
+
+| # | Decision |
+|---|---|
+| [001](docs/decisions/001-split-llm-judge-calls.md) | Split LLM judge into two independent calls to isolate output quality from manifest adherence |
 
 ---
 
