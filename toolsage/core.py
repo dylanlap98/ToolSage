@@ -3,6 +3,7 @@ import time
 from functools import wraps
 from pathlib import Path
 
+from toolsage.improver import Improver
 from toolsage.logger import CallLogger
 from toolsage.manifest import ToolManifest
 from toolsage.scorer import Scorer
@@ -34,6 +35,27 @@ class ToolSage:
                 continue
             count = scorer.score_log(log_path, reg["manifest"].content)
             print(f"Scored {count} call(s) for '{tool_name}' → {log_path}")
+
+    def improve(self, llm=None, auto_approve: bool = False) -> None:
+        """Analyze scored logs and propose targeted manifest improvements.
+
+        Groups calls by usage_category, computes divergence between output_quality
+        and manifest_adherence, and proposes conservative section-level manifest edits
+        where consistent signal exists. Prints a diff and prompts for approval before
+        writing — nothing is changed without consent unless auto_approve=True.
+
+        Requires scored entries (run sage.score() first).
+        Minimum 5 entries per usage category to trigger analysis."""
+        improver = Improver(llm)
+        for tool_name, reg in self.registry.items():
+            log_path = self._logger._path(tool_name)
+            print(f"\nImproving '{tool_name}'...")
+            if not log_path.exists():
+                print("  No log found — skipping.")
+                continue
+            count = improver.improve_log(log_path, reg["manifest"], auto_approve=auto_approve)
+            if count:
+                print(f"  Updated {count} manifest section(s).")
 
     def tool(self, manifest_path: str):
         def decorator(func):

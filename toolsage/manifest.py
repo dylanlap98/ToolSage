@@ -12,3 +12,7 @@ class ToolManifest:
 
     def inject(self, base_description: str) -> str:
         return f"{base_description}\n\n---\n{self.content}"
+
+    def reload(self) -> None:
+        """Re-read the manifest file from disk (e.g. after improve() writes an update)."""
+        self.content = self._load()

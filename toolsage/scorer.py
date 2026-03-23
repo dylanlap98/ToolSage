@@ -7,8 +7,11 @@ Uses THREE separate LLM calls per entry to guarantee score independence:
   manifest_adherence call: manifest + inputs only          (no output/error)
   usage_category call:     manifest + inputs only          (classifies usage type)
 
+All three calls for a batch of entries are submitted concurrently via ThreadPoolExecutor.
+Default batch size is 5 entries × 3 calls = 15 concurrent LLM calls per batch.
+
 Each entry gets five new fields:
-    usage_category      str            what type of operation was this? (e.g. person_lookup)
+    usage_category      str            what type of operation was this?
     output_quality      float 0.0-1.0  how useful was the result for the task?
     manifest_adherence  float 0.0-1.0  did the inputs follow the manifest guidance?
     score_rationale     str            explanation of both scores
@@ -25,6 +28,7 @@ Divergence between scores is the signal the improvement layer uses:
 """
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -125,14 +129,50 @@ should reflect THIS tool's domain:
 
 
 class Scorer:
-    def __init__(self, llm=None):
+    def __init__(self, llm=None, batch_size: int = 5):
         base = llm or ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0)
         self._quality_judge = base.with_structured_output(_QualityScore)
         self._adherence_judge = base.with_structured_output(_AdherenceScore)
         self._category_classifier = base.with_structured_output(_CategoryClassification)
+        self._batch_size = batch_size
+
+    def _build_prompts(self, entry: dict, manifest_content: str) -> tuple[str, str, str]:
+        inputs_str = json.dumps(entry["inputs"], indent=2)
+        output_str = f"ERROR: {entry['error']}" if entry["error"] else entry["output"]
+        return (
+            _OUTPUT_QUALITY_PROMPT.format(
+                task=entry.get("task") or "(no task context provided)",
+                inputs=inputs_str,
+                output=output_str,
+            ),
+            _MANIFEST_ADHERENCE_PROMPT.format(
+                manifest=manifest_content,
+                inputs=inputs_str,
+            ),
+            _CATEGORY_PROMPT.format(
+                manifest=manifest_content,
+                inputs=inputs_str,
+            ),
+        )
+
+    def _apply_scores(
+        self,
+        entry: dict,
+        quality: _QualityScore,
+        adherence: _AdherenceScore,
+        category: _CategoryClassification,
+    ) -> None:
+        entry["usage_category"] = category.usage_category
+        entry["output_quality"] = round(quality.output_quality, 3)
+        entry["manifest_adherence"] = round(adherence.manifest_adherence, 3)
+        entry["score_rationale"] = (
+            f"Output: {quality.rationale} "
+            f"Adherence: {adherence.rationale}"
+        )
+        entry["scored_at"] = datetime.now(timezone.utc).isoformat()
 
     def score_log(self, log_path: Path, manifest_content: str) -> int:
-        """Score all unscored entries in a log file. Returns count of entries scored."""
+        """Score all unscored entries concurrently. Returns count of entries scored."""
         content = log_path.read_text() if log_path.exists() else ""
         entries = json.loads(content) if content.strip() else []
 
@@ -140,40 +180,45 @@ class Scorer:
         if not to_score:
             return 0
 
-        for entry in to_score:
-            inputs_str = json.dumps(entry["inputs"], indent=2)
-            output_str = f"ERROR: {entry['error']}" if entry["error"] else entry["output"]
+        for batch_start in range(0, len(to_score), self._batch_size):
+            batch = to_score[batch_start : batch_start + self._batch_size]
+            max_workers = len(batch) * 3
 
-            quality: _QualityScore = self._quality_judge.invoke(
-                _OUTPUT_QUALITY_PROMPT.format(
-                    task=entry.get("task") or "(no task context provided)",
-                    inputs=inputs_str,
-                    output=output_str,
-                )
-            )
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all calls for all entries in the batch at once
+                quality_futures = {
+                    id(entry): executor.submit(
+                        self._quality_judge.invoke, quality_prompt
+                    )
+                    for entry, (quality_prompt, _, _) in [
+                        (e, self._build_prompts(e, manifest_content)) for e in batch
+                    ]
+                }
+                adherence_futures = {
+                    id(entry): executor.submit(
+                        self._adherence_judge.invoke, adherence_prompt
+                    )
+                    for entry, (_, adherence_prompt, _) in [
+                        (e, self._build_prompts(e, manifest_content)) for e in batch
+                    ]
+                }
+                category_futures = {
+                    id(entry): executor.submit(
+                        self._category_classifier.invoke, category_prompt
+                    )
+                    for entry, (_, _, category_prompt) in [
+                        (e, self._build_prompts(e, manifest_content)) for e in batch
+                    ]
+                }
 
-            adherence: _AdherenceScore = self._adherence_judge.invoke(
-                _MANIFEST_ADHERENCE_PROMPT.format(
-                    manifest=manifest_content,
-                    inputs=inputs_str,
-                )
-            )
-
-            category: _CategoryClassification = self._category_classifier.invoke(
-                _CATEGORY_PROMPT.format(
-                    manifest=manifest_content,
-                    inputs=inputs_str,
-                )
-            )
-
-            entry["usage_category"] = category.usage_category
-            entry["output_quality"] = round(quality.output_quality, 3)
-            entry["manifest_adherence"] = round(adherence.manifest_adherence, 3)
-            entry["score_rationale"] = (
-                f"Output: {quality.rationale} "
-                f"Adherence: {adherence.rationale}"
-            )
-            entry["scored_at"] = datetime.now(timezone.utc).isoformat()
+                for entry in batch:
+                    eid = id(entry)
+                    self._apply_scores(
+                        entry,
+                        quality_futures[eid].result(),
+                        adherence_futures[eid].result(),
+                        category_futures[eid].result(),
+                    )
 
         log_path.write_text(json.dumps(entries, indent=2))
         return len(to_score)
