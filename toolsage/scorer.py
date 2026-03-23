@@ -1,22 +1,27 @@
 """
 Scorer — LLM-as-judge for tool call quality.
 
-Reads a tool's log file, scores each unscored entry against the tool's manifest
-and the agent's task using TWO separate LLM calls per entry — one per dimension.
-This guarantees the scores are independent and cannot influence each other.
+Uses THREE separate LLM calls per entry to guarantee score independence:
 
   output_quality call:     task + inputs + output/error   (no manifest)
   manifest_adherence call: manifest + inputs only          (no output/error)
+  usage_category call:     manifest + inputs only          (classifies usage type)
 
-Each entry gets four new fields:
+Each entry gets five new fields:
+    usage_category      str            what type of operation was this? (e.g. person_lookup)
     output_quality      float 0.0-1.0  how useful was the result for the task?
     manifest_adherence  float 0.0-1.0  did the inputs follow the manifest guidance?
     score_rationale     str            explanation of both scores
     scored_at           str            ISO timestamp
 
-Divergence between the two scores is the signal the SHAP layer uses:
-  adherence low,  quality high → manifest guidance may be too restrictive or wrong
-  adherence high, quality low  → manifest guidance may be missing something
+usage_category enables sub-category trend analysis in sage.improve() — the same
+tool can behave differently across usage types, so manifest improvements must be
+targeted at specific categories rather than applied globally.
+
+Divergence between scores is the signal the improvement layer uses:
+  adherence low,  quality high → manifest too restrictive for this usage type
+  adherence high, quality low  → manifest incomplete for this usage type
+  adherence low,  quality low  → manifest guidance confirmed correct
 """
 
 import json
@@ -35,6 +40,16 @@ class _QualityScore(BaseModel):
 class _AdherenceScore(BaseModel):
     manifest_adherence: float = Field(ge=0.0, le=1.0)
     rationale: str
+
+
+class _CategoryClassification(BaseModel):
+    usage_category: str = Field(description=(
+        "Short snake_case label (2-4 words) describing the type of operation the agent "
+        "attempted. Derived from the tool's manifest and the actual inputs — not matched "
+        "to a fixed taxonomy. Should reflect the tool's domain: a calculator call might "
+        "be 'unit_conversion', a RAG call might be 'document_qa', a code tool might be "
+        "'script_execution'. Be consistent across calls with similar intent."
+    ))
 
 
 _OUTPUT_QUALITY_PROMPT = """\
@@ -78,12 +93,43 @@ Score manifest_adherence (0.0-1.0): how closely did the inputs follow the manife
 Return a score and a 1-2 sentence rationale focused only on input behaviour vs the manifest.\
 """
 
+_CATEGORY_PROMPT = """\
+You are classifying a tool call into a usage sub-category based on the tool's manifest
+and the actual inputs used.
+
+TOOL MANIFEST:
+{manifest}
+
+TOOL CALL INPUTS:
+{inputs}
+
+Return a single snake_case usage_category label (2-4 words) that describes what TYPE
+of operation the agent was attempting. Derive the category from the manifest's described
+use cases and the nature of the inputs — do not match to a fixed list.
+
+Be consistent: calls with similar intent should receive the same category label.
+
+The following are examples of well-formed labels across different tool types.
+Use them only to understand the format and granularity expected — your label
+should reflect THIS tool's domain:
+
+  Search/lookup tools:    person_lookup, concept_search, document_retrieval, event_lookup
+  Calculation tools:      arithmetic_calculation, unit_conversion, statistical_summary
+  Code/interpreter tools: script_execution, code_generation, error_debugging, data_transformation
+  RAG/knowledge tools:    knowledge_retrieval, document_qa, semantic_search, fact_verification
+  Data analysis tools:    dataset_aggregation, trend_analysis, correlation_check, chart_generation
+  API/integration tools:  api_query, record_fetch, webhook_trigger, auth_request
+  File tools:             file_read, file_write, format_conversion, content_extraction
+  Communication tools:    message_send, notification_trigger, email_draft, report_generation\
+"""
+
 
 class Scorer:
     def __init__(self, llm=None):
         base = llm or ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0)
         self._quality_judge = base.with_structured_output(_QualityScore)
         self._adherence_judge = base.with_structured_output(_AdherenceScore)
+        self._category_classifier = base.with_structured_output(_CategoryClassification)
 
     def score_log(self, log_path: Path, manifest_content: str) -> int:
         """Score all unscored entries in a log file. Returns count of entries scored."""
@@ -113,6 +159,14 @@ class Scorer:
                 )
             )
 
+            category: _CategoryClassification = self._category_classifier.invoke(
+                _CATEGORY_PROMPT.format(
+                    manifest=manifest_content,
+                    inputs=inputs_str,
+                )
+            )
+
+            entry["usage_category"] = category.usage_category
             entry["output_quality"] = round(quality.output_quality, 3)
             entry["manifest_adherence"] = round(adherence.manifest_adherence, 3)
             entry["score_rationale"] = (
