@@ -44,10 +44,11 @@ and receives an improved manifest
 
 ### Roadmap
 - [x] Core manifest loading and injection
-- [x] LLM-as-judge scorer
+- [x] LLM-as-judge scorer (concurrent, 3 independent calls per entry)
+- [x] Usage sub-category classification (enables per-category trend analysis)
+- [x] Manifest auto-update loop (`sage.improve()` — divergence-driven, human-in-the-loop)
 - [ ] SHAP feature attribution
 - [ ] Embedding store for past calls
-- [ ] Manifest auto-update loop
 - [ ] LangGraph integration
 - [ ] AWS AgentCore Strands integration
 - [ ] MCP tool support
@@ -65,20 +66,25 @@ Design decisions and implementation notes live in [`docs/decisions/`](docs/decis
 
 ---
 
-### Quick Start 
+### Quick Start
 
 ```python
-from toolsage import ToolSage, tool_manifest
+from toolsage import ToolSage
 
-# Wrap any tool
-sage = ToolSage(storage="local")
+sage = ToolSage(log_dir="logs")
 
-@sage.tool
-@tool_manifest("manifests/search_docs.manifest.md")
-async def search_docs(query: str) -> dict:
+@sage.tool("manifests/search_docs.manifest.md")
+def search_docs(query: str) -> str:
     # your tool logic
     ...
 
-# Use normally — ToolSage handles the rest
-result = await search_docs("how do I reset my password")
+# 1. Run your agent — manifest is injected JIT, every call is logged
+sage.set_task("Find the answer to X")
+result = search_docs("how do I reset my password")
+
+# 2. Score logged calls (LLM-as-judge, concurrent)
+sage.score()
+
+# 3. Analyze divergence and propose manifest improvements
+sage.improve()
 ```

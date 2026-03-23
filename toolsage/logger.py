@@ -6,6 +6,7 @@ Each file is a JSON array of call records, one object per invocation.
 """
 
 import json
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,7 @@ class CallLogger:
     def __init__(self, log_dir: str | Path = "logs"):
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
 
     def _path(self, tool_name: str) -> Path:
         return self.log_dir / f"log_{tool_name}.json"
@@ -40,8 +42,8 @@ class CallLogger:
         }
 
         path = self._path(tool_name)
-        content = path.read_text() if path.exists() else ""
-        existing = json.loads(content) if content.strip() else []
-
-        existing.append(entry)
-        path.write_text(json.dumps(existing, indent=2))
+        with self._lock:
+            content = path.read_text() if path.exists() else ""
+            existing = json.loads(content) if content.strip() else []
+            existing.append(entry)
+            path.write_text(json.dumps(existing, indent=2))
