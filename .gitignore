@@ -3,6 +3,9 @@
 .venv
 toolsage/requirements.txt
 
+# Logs
+logs/
+
 # Secrets
 secrets.json
 
