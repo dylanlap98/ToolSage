@@ -97,3 +97,4 @@ if __name__ == "__main__":
     print_augmented_description()
     sage.set_task(RESEARCH_TASK)  # optional — enriches logs with task context for scoring
     run_agent()
+    sage.score()

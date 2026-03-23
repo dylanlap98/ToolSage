@@ -5,6 +5,7 @@ from pathlib import Path
 
 from toolsage.logger import CallLogger
 from toolsage.manifest import ToolManifest
+from toolsage.scorer import Scorer
 
 
 class ToolSage:
@@ -21,6 +22,18 @@ class ToolSage:
 
     def clear_task(self) -> None:
         self._task = None
+
+    def score(self, llm=None) -> None:
+        """Run LLM-as-judge over all logged tool calls. Each entry gets
+        output_quality and manifest_adherence scored independently. Only
+        unscored entries are evaluated; results are written back into the log."""
+        scorer = Scorer(llm)
+        for tool_name, reg in self.registry.items():
+            log_path = self._logger._path(tool_name)
+            if not log_path.exists():
+                continue
+            count = scorer.score_log(log_path, reg["manifest"].content)
+            print(f"Scored {count} call(s) for '{tool_name}' → {log_path}")
 
     def tool(self, manifest_path: str):
         def decorator(func):
