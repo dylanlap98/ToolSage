@@ -2,7 +2,18 @@
 CallLogger — records every tool invocation to a per-tool JSON log file.
 
 Each tool gets its own file: logs/log_{tool_name}.json
-Each file is a JSON array of call records, one object per invocation.
+
+File format:
+{
+  "category_registry": {
+    "<category_name>": "<one-sentence description of what this category represents>"
+  },
+  "entries": [ ... call records ... ]
+}
+
+The category_registry is populated and maintained by the Scorer as calls are classified.
+It ensures the classifier is consistent across runs — new categories are only added when
+no existing category fits.
 """
 
 import json
@@ -20,6 +31,24 @@ class CallLogger:
 
     def _path(self, tool_name: str) -> Path:
         return self.log_dir / f"log_{tool_name}.json"
+
+    @staticmethod
+    def _read(path: Path) -> tuple[dict, list]:
+        """Return (category_registry, entries). Handles missing files and old array format."""
+        if not path.exists():
+            return {}, []
+        content = path.read_text()
+        if not content.strip():
+            return {}, []
+        data = json.loads(content)
+        if isinstance(data, list):
+            # Migrate old format (bare array) to new format
+            return {}, data
+        return data.get("category_registry", {}), data.get("entries", [])
+
+    @staticmethod
+    def _write(path: Path, registry: dict, entries: list) -> None:
+        path.write_text(json.dumps({"category_registry": registry, "entries": entries}, indent=2))
 
     def write(
         self,
@@ -43,7 +72,6 @@ class CallLogger:
 
         path = self._path(tool_name)
         with self._lock:
-            content = path.read_text() if path.exists() else ""
-            existing = json.loads(content) if content.strip() else []
-            existing.append(entry)
-            path.write_text(json.dumps(existing, indent=2))
+            registry, entries = self._read(path)
+            entries.append(entry)
+            self._write(path, registry, entries)

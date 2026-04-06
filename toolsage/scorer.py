@@ -48,11 +48,14 @@ class _AdherenceScore(BaseModel):
 
 class _CategoryClassification(BaseModel):
     usage_category: str = Field(description=(
-        "Short snake_case label (2-4 words) describing the type of operation the agent "
-        "attempted. Derived from the tool's manifest and the actual inputs — not matched "
-        "to a fixed taxonomy. Should reflect the tool's domain: a calculator call might "
-        "be 'unit_conversion', a RAG call might be 'document_qa', a code tool might be "
-        "'script_execution'. Be consistent across calls with similar intent."
+        "Short snake_case label (2-4 words) for the type of operation. "
+        "MUST match an existing registry category if the call fits one — "
+        "only use a new label if no existing category applies."
+    ))
+    category_description: str = Field(description=(
+        "One sentence describing what this category represents as a general pattern "
+        "across calls of this type. Written generically, not specific to this one call. "
+        "If matching an existing category, reproduce its existing description unchanged."
     ))
 
 
@@ -105,8 +108,7 @@ Return a score and a 1-2 sentence rationale focused only on input behaviour vs t
 """
 
 _CATEGORY_PROMPT = """\
-You are classifying a tool call into a usage sub-category based on the tool's manifest
-and the actual inputs used.
+You are classifying a tool call into a usage sub-category.
 
 TOOL MANIFEST:
 {manifest}
@@ -114,24 +116,16 @@ TOOL MANIFEST:
 TOOL CALL INPUTS:
 {inputs}
 
-Return a single snake_case usage_category label (2-4 words) that describes what TYPE
-of operation the agent was attempting. Derive the category from the manifest's described
-use cases and the nature of the inputs — do not match to a fixed list.
+EXISTING CATEGORY REGISTRY:
+{registry_text}
 
-Be consistent: calls with similar intent should receive the same category label.
-
-The following are examples of well-formed labels across different tool types.
-Use them only to understand the format and granularity expected — your label
-should reflect THIS tool's domain:
-
-  Search/lookup tools:    person_lookup, concept_search, document_retrieval, event_lookup
-  Calculation tools:      arithmetic_calculation, unit_conversion, statistical_summary
-  Code/interpreter tools: script_execution, code_generation, error_debugging, data_transformation
-  RAG/knowledge tools:    knowledge_retrieval, document_qa, semantic_search, fact_verification
-  Data analysis tools:    dataset_aggregation, trend_analysis, correlation_check, chart_generation
-  API/integration tools:  api_query, record_fetch, webhook_trigger, auth_request
-  File tools:             file_read, file_write, format_conversion, content_extraction
-  Communication tools:    message_send, notification_trigger, email_draft, report_generation\
+Classification rules:
+1. If the call matches an existing registry category, USE THAT EXACT LABEL — do not invent
+   a synonym or variant. Consistency across runs is more important than precision.
+2. Only create a new category if no existing one fits. New labels must follow the same
+   snake_case 2-4 word format and specificity level as the existing registry.
+3. Return the category_description: if matching an existing category, copy its description
+   exactly. If creating a new one, write one generic sentence describing the pattern.\
 """
 
 
@@ -143,9 +137,15 @@ class Scorer:
         self._category_classifier = base.with_structured_output(_CategoryClassification)
         self._batch_size = batch_size
 
-    def _build_prompts(self, entry: dict, manifest_content: str) -> tuple[str, str, str]:
+    def _build_prompts(
+        self, entry: dict, manifest_content: str, registry: dict
+    ) -> tuple[str, str, str]:
         inputs_str = json.dumps(entry["inputs"], indent=2)
         output_str = f"ERROR: {entry['error']}" if entry["error"] else entry["output"]
+        registry_text = (
+            "\n".join(f"- {k}: {v}" for k, v in registry.items())
+            if registry else "(none yet — this is the first call being classified)"
+        )
         return (
             _OUTPUT_QUALITY_PROMPT.format(
                 task=entry.get("task") or "(no task context provided)",
@@ -159,6 +159,7 @@ class Scorer:
             _CATEGORY_PROMPT.format(
                 manifest=manifest_content,
                 inputs=inputs_str,
+                registry_text=registry_text,
             ),
         )
 
@@ -168,6 +169,7 @@ class Scorer:
         quality: _QualityScore,
         adherence: _AdherenceScore,
         category: _CategoryClassification,
+        registry: dict,
     ) -> None:
         entry["usage_category"] = category.usage_category
         entry["output_quality"] = round(quality.output_quality, 3)
@@ -177,11 +179,14 @@ class Scorer:
             f"Adherence: {adherence.rationale}"
         )
         entry["scored_at"] = datetime.now(timezone.utc).isoformat()
+        # Add to registry if this is a new category
+        if category.usage_category not in registry:
+            registry[category.usage_category] = category.category_description
 
     def score_log(self, log_path: Path, manifest_content: str) -> int:
         """Score all unscored entries concurrently. Returns count of entries scored."""
-        content = log_path.read_text() if log_path.exists() else ""
-        entries = json.loads(content) if content.strip() else []
+        from toolsage.logger import CallLogger
+        registry, entries = CallLogger._read(log_path)
 
         to_score = [e for e in entries if "output_quality" not in e]
         if not to_score:
@@ -192,30 +197,20 @@ class Scorer:
             max_workers = len(batch) * 3
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all calls for all entries in the batch at once
+                # Build prompts with current registry state (sequential — registry grows each batch)
+                prompts = [(e, self._build_prompts(e, manifest_content, registry)) for e in batch]
+
                 quality_futures = {
-                    id(entry): executor.submit(
-                        self._quality_judge.invoke, quality_prompt
-                    )
-                    for entry, (quality_prompt, _, _) in [
-                        (e, self._build_prompts(e, manifest_content)) for e in batch
-                    ]
+                    id(entry): executor.submit(self._quality_judge.invoke, quality_prompt)
+                    for entry, (quality_prompt, _, _) in prompts
                 }
                 adherence_futures = {
-                    id(entry): executor.submit(
-                        self._adherence_judge.invoke, adherence_prompt
-                    )
-                    for entry, (_, adherence_prompt, _) in [
-                        (e, self._build_prompts(e, manifest_content)) for e in batch
-                    ]
+                    id(entry): executor.submit(self._adherence_judge.invoke, adherence_prompt)
+                    for entry, (_, adherence_prompt, _) in prompts
                 }
                 category_futures = {
-                    id(entry): executor.submit(
-                        self._category_classifier.invoke, category_prompt
-                    )
-                    for entry, (_, _, category_prompt) in [
-                        (e, self._build_prompts(e, manifest_content)) for e in batch
-                    ]
+                    id(entry): executor.submit(self._category_classifier.invoke, category_prompt)
+                    for entry, (_, _, category_prompt) in prompts
                 }
 
                 for entry in batch:
@@ -225,7 +220,8 @@ class Scorer:
                         quality_futures[eid].result(),
                         adherence_futures[eid].result(),
                         category_futures[eid].result(),
+                        registry,
                     )
 
-        log_path.write_text(json.dumps(entries, indent=2))
+        CallLogger._write(log_path, registry, entries)
         return len(to_score)

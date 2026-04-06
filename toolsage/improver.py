@@ -235,8 +235,8 @@ class Improver:
         """Analyze a scored log and propose manifest improvements.
 
         Returns the number of manifest sections updated."""
-        content = log_path.read_text() if log_path.exists() else ""
-        entries = json.loads(content) if content.strip() else []
+        from toolsage.logger import CallLogger
+        _, entries = CallLogger._read(log_path)
 
         scored = [e for e in entries if "output_quality" in e and "usage_category" in e]
         if not scored:
