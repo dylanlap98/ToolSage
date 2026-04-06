@@ -76,6 +76,8 @@ Design decisions and implementation notes live in [`docs/decisions/`](docs/decis
 | # | Decision |
 |---|---|
 | [001](docs/decisions/001-split-llm-judge-calls.md) | Split LLM judge into two independent calls to isolate output quality from manifest adherence |
+| [002](docs/decisions/002-output-quality-scoped-to-immediate-operation.md) | Score output quality against the immediate tool operation, not the session-level task |
+| [003](docs/decisions/003-persistent-category-registry.md) | Persist a category registry in each log file to enforce consistent classification across runs |
 
 ---
 
