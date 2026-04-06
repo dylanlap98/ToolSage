@@ -57,24 +57,31 @@ class _CategoryClassification(BaseModel):
 
 
 _OUTPUT_QUALITY_PROMPT = """\
-You are evaluating how useful a tool call result was for completing an agent's task.
-Do not consider how the tool was called — only evaluate the usefulness of the result.
+You are evaluating how useful a tool call result was for the specific operation the agent attempted.
 
-AGENT TASK:
+AGENT TASK (context only — the broader goal the agent is working toward):
 {task}
 
 TOOL CALL:
   inputs: {inputs}
   output: {output}
 
-Score output_quality (0.0-1.0): how well did this result serve the task?
-  1.0 — output directly and fully answers what the task needs
-  0.7 — output is relevant and useful but not complete
-  0.4 — output is loosely relevant; partial value for the task
-  0.1 — output is present but provides little useful information
-  0.0 — no output or output is entirely useless for the task
+The agent task above is context. Your evaluation target is narrower:
+look at the INPUTS to determine what specific operation this tool call was trying to accomplish,
+then evaluate whether the OUTPUT successfully completed THAT operation.
 
-Return a score and a 1-2 sentence rationale focused only on result usefulness.\
+Tools are often called many times across a workflow. A call that correctly executes
+one step of a multi-step task should score 1.0 if it accomplished what its inputs asked for —
+the overall task being incomplete is irrelevant to this score.
+
+Score output_quality (0.0-1.0): how well did the output serve the immediate operation in the inputs?
+  1.0 — output directly and fully satisfies what the inputs asked for
+  0.7 — output is useful and mostly satisfies the inputs, with minor gaps
+  0.4 — output partially satisfies the inputs; the operation was attempted but incomplete
+  0.1 — output has little useful value for what the inputs requested
+  0.0 — no output, or output is entirely wrong for the requested operation
+
+Return a score and a 1-2 sentence rationale focused only on whether the output served the inputs.\
 """
 
 _MANIFEST_ADHERENCE_PROMPT = """\
