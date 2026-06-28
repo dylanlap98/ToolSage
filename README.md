@@ -39,18 +39,25 @@ Agent calls tool
       ↓
 Manifest injected into agent context (just-in-time)
       ↓
-Tool executes
+Tool executes → call logged (inputs, output, error, duration)
       ↓
-Outcome scored (LLM-as-judge or custom scorer)
+sage.score(): LLM-as-judge scores each call independently
+  output_quality    — did the output serve the specific operation?
+  manifest_adherence — did the inputs follow the manifest?
+  usage_category    — what type of operation was this?
       ↓
-SHAP analysis — which input factors drove the outcome?
+sage.improve(): divergence analysis by category
+  groups calls by usage_category
+  computes mean divergence (quality − adherence) per category
+  requires ≥5 entries + ≥±0.20 divergence before acting
       ↓
-Call embedded + stored with score
+LLM diagnoses root cause from accumulated rationale text
       ↓
-Manifest updated if consistent improvement signal found
+LLM proposes targeted manifest section edit
       ↓
-Next agent call retrieves semantically similar past calls
-and receives an improved manifest
+Human approves → manifest updated
+      ↓
+Next agent run uses the improved manifest
 ```
 
 ---
@@ -60,12 +67,8 @@ and receives an improved manifest
 - [x] LLM-as-judge scorer (concurrent, 3 independent calls per entry)
 - [x] Usage sub-category classification with persistent category registry (consistent grouping across runs)
 - [x] Manifest auto-update loop (`sage.improve()` — divergence-driven, human-in-the-loop)
-- [ ] SHAP feature attribution
-- [ ] Embedding store for past calls
-- [ ] LangGraph integration
-- [ ] AWS AgentCore Strands integration
-- [ ] MCP tool support
-- [ ] OpenAI function calling support
+- [ ] Embedding store for past calls (semantic retrieval of similar past calls to inject dynamic guidance)
+- [ ] PyPI package
 
 ---
 
