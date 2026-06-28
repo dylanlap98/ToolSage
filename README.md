@@ -67,7 +67,6 @@ Next agent run uses the improved manifest
 - [x] LLM-as-judge scorer (concurrent, 3 independent calls per entry)
 - [x] Usage sub-category classification with persistent category registry (consistent grouping across runs)
 - [x] Manifest auto-update loop (`sage.improve()` — divergence-driven, human-in-the-loop)
-- [ ] Embedding store for past calls (semantic retrieval of similar past calls to inject dynamic guidance)
 - [ ] PyPI package
 
 ---
