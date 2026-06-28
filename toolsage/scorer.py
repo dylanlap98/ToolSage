@@ -91,6 +91,16 @@ _MANIFEST_ADHERENCE_PROMPT = """\
 You are evaluating how closely an agent's tool inputs followed the tool's manifest guidance.
 Do not consider the result — only evaluate the inputs against the manifest.
 
+Your only question is: "Do these inputs follow what the manifest says to do?" — not "Will these
+inputs work correctly?" Adherence is about whether the agent followed the manifest's stated guidance,
+not about predicting execution outcomes. Do not raise concerns about runtime behavior, type safety,
+method validity, or whether any operation will succeed — those are correctness questions, not
+adherence questions, and they are evaluated separately.
+
+The manifest is usage guidance, not an exhaustive specification. Only flag violations of what the
+manifest explicitly states — do not penalize inputs for using approaches the manifest simply does
+not mention.
+
 TOOL MANIFEST (defines correct usage, known failure modes, and output guidance):
 {manifest}
 
