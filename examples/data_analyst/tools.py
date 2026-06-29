@@ -40,7 +40,28 @@ def _namespace() -> dict:
 
 
 @tool
-@sage.tool(MANIFEST_PATH)
+@sage.tool(
+    MANIFEST_PATH,
+    scorer_hints={
+        # Each exec() call runs in a fresh namespace — variables from prior calls
+        # are not available. A NameError from referencing an unfetched variable
+        # means the code logic is correct but setup was incomplete; this is a
+        # recoverable intermediate failure, not a total quality failure.
+        "quality": (
+            "A NameError caused by referencing a variable not fetched from SALES_DATA "
+            "in the same call indicates incomplete input setup, not incorrect logic. "
+            "The algorithm itself is valid — treat as a partial attempt (0.3-0.5) "
+            "rather than total failure (0.0)."
+        ),
+        # NOTE: adherence hint intentionally omitted so improve() can detect and
+        # propose a fix for the manifest's incomplete Available Scope declaration.
+        # "adherence": (
+        #     "The Available Scope is a minimum guarantee, not an exhaustive list. "
+        #     "Do not penalise code for accessing SALES_DATA fields not enumerated "
+        #     "in the manifest if those fields exist and the call succeeds."
+        # ),
+    },
+)
 def python_repl(code: str) -> str:
     """Execute Python code and return printed output."""
     buf = io.StringIO()

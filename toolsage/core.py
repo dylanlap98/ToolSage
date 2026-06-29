@@ -33,7 +33,7 @@ class ToolSage:
             log_path = self._logger._path(tool_name)
             if not log_path.exists():
                 continue
-            count = scorer.score_log(log_path, reg["manifest"].content)
+            count = scorer.score_log(log_path, reg["manifest"].content, reg.get("scorer_hints", {}))
             print(f"Scored {count} call(s) for '{tool_name}' → {log_path}")
 
     def improve(self, llm=None, auto_approve: bool = False) -> None:
@@ -57,7 +57,7 @@ class ToolSage:
             if count:
                 print(f"  Updated {count} manifest section(s).")
 
-    def tool(self, manifest_path: str):
+    def tool(self, manifest_path: str, scorer_hints: dict[str, str] | None = None):
         def decorator(func):
             manifest = ToolManifest(manifest_path)
             sig = inspect.signature(func)
@@ -95,7 +95,8 @@ class ToolSage:
             wrapper.__doc__ = manifest.inject(func.__doc__ or "")
             self.registry[func.__name__] = {
                 "manifest": manifest,
-                "func": wrapper
+                "func": wrapper,
+                "scorer_hints": scorer_hints or {},
             }
             return wrapper
         return decorator
