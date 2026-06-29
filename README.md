@@ -80,6 +80,7 @@ Design decisions and implementation notes live in [`docs/decisions/`](docs/decis
 | [001](docs/decisions/001-split-llm-judge-calls.md) | Split LLM judge into two independent calls to isolate output quality from manifest adherence |
 | [002](docs/decisions/002-output-quality-scoped-to-immediate-operation.md) | Score output quality against the immediate tool operation, not the session-level task |
 | [003](docs/decisions/003-persistent-category-registry.md) | Persist a category registry in each log file to enforce consistent classification across runs |
+| [004](docs/decisions/004-scorer-hints-for-per-judge-tuning.md) | `scorer_hints` — per-judge prompt tuning at the decorator level, separate from the agent-facing manifest |
 
 ---
 
@@ -105,3 +106,29 @@ sage.score()
 # 3. Analyze divergence and propose manifest improvements
 sage.improve()
 ```
+
+#### Tuning the scorer with `scorer_hints`
+
+The default judges work well, but some tools have domain-specific failure modes that the generic prompts won't interpret correctly. Pass `scorer_hints` to `@sage.tool()` to append context to a specific judge's prompt — without touching your manifest or the core scorer logic.
+
+```python
+@sage.tool(
+    "manifests/python_repl.manifest.md",
+    scorer_hints={
+        "quality": (
+            "A NameError from referencing a variable not set up in the same call "
+            "is an incomplete attempt, not a logic error. Score 0.3-0.5, not 0.0."
+        ),
+    },
+)
+def python_repl(code: str) -> str:
+    ...
+```
+
+Keys are `"quality"`, `"adherence"`, and `"category"` — each hint is appended only to its judge's prompt:
+
+- `"quality"` — did the output serve the immediate operation?
+- `"adherence"` — did the inputs follow the manifest?
+- `"category"` — what type of operation was this? (controls the `usage_category` label that `improve()` groups calls by — hint this when the classifier is splitting or merging categories incorrectly)
+
+**Caution with `"adherence"` hints:** raising adherence scores artificially collapses the `quality − adherence` divergence that `sage.improve()` uses to detect manifest gaps. If the manifest genuinely has a gap, suppressing the divergence signal prevents `improve()` from ever proposing the fix. Prefer `"quality"` hints for correcting mis-scored failures; reserve `"adherence"` hints for cases where the manifest is correct and the judge is structurally wrong.
