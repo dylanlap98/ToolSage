@@ -148,29 +148,35 @@ class Scorer:
         self._batch_size = batch_size
 
     def _build_prompts(
-        self, entry: dict, manifest_content: str, registry: dict
+        self, entry: dict, manifest_content: str, registry: dict, scorer_hints: dict[str, str] | None = None
     ) -> tuple[str, str, str]:
+        hints = scorer_hints or {}
         inputs_str = json.dumps(entry["inputs"], indent=2)
         output_str = f"ERROR: {entry['error']}" if entry["error"] else entry["output"]
         registry_text = (
             "\n".join(f"- {k}: {v}" for k, v in registry.items())
             if registry else "(none yet — this is the first call being classified)"
         )
+
+        def _suffix(key: str) -> str:
+            h = hints.get(key, "")
+            return f"\n\nTOOL-SPECIFIC NOTES:\n{h}" if h else ""
+
         return (
             _OUTPUT_QUALITY_PROMPT.format(
                 task=entry.get("task") or "(no task context provided)",
                 inputs=inputs_str,
                 output=output_str,
-            ),
+            ) + _suffix("quality"),
             _MANIFEST_ADHERENCE_PROMPT.format(
                 manifest=manifest_content,
                 inputs=inputs_str,
-            ),
+            ) + _suffix("adherence"),
             _CATEGORY_PROMPT.format(
                 manifest=manifest_content,
                 inputs=inputs_str,
                 registry_text=registry_text,
-            ),
+            ) + _suffix("category"),
         )
 
     def _apply_scores(
@@ -193,7 +199,7 @@ class Scorer:
         if category.usage_category not in registry:
             registry[category.usage_category] = category.category_description
 
-    def score_log(self, log_path: Path, manifest_content: str) -> int:
+    def score_log(self, log_path: Path, manifest_content: str, scorer_hints: dict[str, str] | None = None) -> int:
         """Score all unscored entries concurrently. Returns count of entries scored."""
         from toolsage.logger import CallLogger
         registry, entries = CallLogger._read(log_path)
@@ -208,7 +214,7 @@ class Scorer:
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Build prompts with current registry state (sequential — registry grows each batch)
-                prompts = [(e, self._build_prompts(e, manifest_content, registry)) for e in batch]
+                prompts = [(e, self._build_prompts(e, manifest_content, registry, scorer_hints)) for e in batch]
 
                 quality_futures = {
                     id(entry): executor.submit(self._quality_judge.invoke, quality_prompt)
